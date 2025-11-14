@@ -828,7 +828,50 @@
     "iterations": [
       {
         "iteration_id": 1,
-        "method": "GraphEKF-Hyper.  (i)  Represent the 2-parameter state of every transformer block as nodes in a line graph; edges connect consecutive blocks and link attention–MLP pairs inside a block.  (ii)  Assume the joint LR/WD log-state x∈ℝ^{2L} lies in a low-frequency subspace spanned by the first r Laplacian eigenvectors Φ∈ℝ^{2L×r} (r≪2L, r≈128).  Track only the compressed coefficients c so that x≈Φc.  (iii)  Process model: c_{t+1}=c_t+w_t, w_t~𝓝(0,β·Σ_BO).  Σ_BO is the GP posterior covariance projected into the eigenbasis; β≈1.  (iv)  Observations every τ′ steps: z_t = [Δℓ/τ′, g_rms^1,…,g_rms^{2L}] where g_rms^i is rms-gradient of sub-module i.  Linearise g(x) with one forward-AD pass; extra cost ≤2 batches.  Observation matrix H_t is Φᵀ∂g/∂x.  (v)  Extended Kalman update in r-dim space, predict, inject BO only if max diag(P̂)>ε.  BO searches in the same r-dim space, warm-started at (μ̂,P̂).  (vi)  A tiny replay buffer of past runs trains a variational prior p(c₀)=𝓝(μ₀,Σ₀); this becomes the EKF initial belief and is updated after each run (empirical Bayes).  (vii)  Output per-parameter LR & WD by mapping Φc back to layer space; fits existing PyTorch optimiser hooks (~150 loc)."
+        "method": "GraphEKF-Hyper.  (i)  Represent the 2-parameter state of every transformer block as nodes in a line graph; edges connect consecutive blocks and link attention–MLP pairs inside a block.  (ii)  Assume the joint LR/WD log-state x∈ℝ^{2L} lies in a low-frequency subspace spanned by the first r Laplacian eigenvectors Φ∈ℝ^{2L×r} (r≪2L, r≈128).  Track only the compressed coefficients c so that x≈Φc.  (iii)  Process model: c_{t+1}=c_t+w_t, w_t~𝓝(0,β·Σ_BO).  Σ_BO is the GP posterior covariance projected into the eigenbasis; β≈1.  (iv)  Observations every τ′ steps: z_t = [Δℓ/τ′, g_rms^1,…,g_rms^{2L}] where g_rms^i is rms-gradient of sub-module i.  Linearise g(x) with one forward-AD pass; extra cost ≤2 batches.  Observation matrix H_t is Φᵀ∂g/∂x.  (v)  Extended Kalman update in r-dim space, predict, inject BO only if max diag(P̂)>ε.  BO searches in the same r-dim space, warm-started at (μ̂,P̂).  (vi)  A tiny replay buffer of past runs trains a variational prior p(c₀)=𝓝(μ₀,Σ₀); this becomes the EKF initial belief and is updated after each run (empirical Bayes).  (vii)  Output per-parameter LR & WD by mapping Φc back to layer space; fits existing PyTorch optimiser hooks (~150 loc).",
+        "experimental_design": {
+          "experiment_summary": "We will fine-tune the 0.6-billion-parameter Qwen3 model on the GSM8K mathematical-reasoning dataset using the newly proposed GraphEKF-Hyper controller for per-layer learning-rate (LR) and weight-decay (WD) scheduling.  \n\nWorkflow\n1.  Data: load GSM8K train/dev plus its two OOD variants GSM-Hard and GSM1k for robustness checks.  \n2.  Model: Qwen3-0.6B is adapted with LoRA (rank 64) and, in a separate run, 4-bit QLoRA to test quantisation robustness.  \n3.  Scheduler implementation: each transformer block contributes two nodes (LR, WD) to a line-plus-intra block graph.  The first 128 eigenvectors of the graph Laplacian (pre-computed once) form a basis Φ.  We maintain only the coefficient vector c∈ℝ¹²⁸.  At every τ′ ≈100 optimisation steps we collect the loss decrease per step Δℓ/τ′ and the RMS gradient of every sub-module, linearise these statistics with one forward-mode AD pass and perform an r-dimensional Extended Kalman Filter update (μ, P).  If state uncertainty max diag(P) exceeds ε the controller triggers a Bayesian-optimisation step in the same latent space to refine c.  The updated coefficients are mapped back to layer space (x = Φc) and exponentiated to obtain new per-layer LR and WD values that are applied through PyTorch optimiser hooks.  \n4.  Meta-prior: after every training run the filtered initial belief (μ₀, Σ₀) is updated with variational Bayes and stored in a replay buffer so that subsequent runs start with a better prior.  \n5.  Baseline comparison: we repeat the same fine-tuning pipeline with the previous best hierarchical scheduler HierEKF-Hyper.  \n6.  Evaluation: for three random seeds we report (i) GSM8K test accuracy (primary), (ii) GSM-Hard accuracy, (iii) GSM1k accuracy, (iv) accuracy drop when switching to 4-bit QLoRA, (v) number of gradient-overflow resets, and (vi) percentage of training GPU-time spent inside the BO sub-routine.  \n7.  Ablation: rerun GraphEKF-Hyper with r ∈ {32,64,128,256} to study the effect of compression degree.  \nThe entire experiment fits on a single A100-80 GB GPU; memory overhead is <200 MB for the controller.",
+          "evaluation_metrics": [
+            "GSM8K test accuracy (%)",
+            "GSM-Hard accuracy (%)",
+            "GSM1k accuracy (%)",
+            "Quantisation accuracy drop (pp)",
+            "Gradient overflow count",
+            "BO compute time (%)"
+          ],
+          "proposed_method": "GraphEKF-Hyper: a compressed, graph-based Extended Kalman Filter with on-demand Bayesian Optimisation for per-layer LR/WD control.  \nKey ideas\n• Represent the two hyper-parameters of every transformer block (LR, WD) as nodes in a graph that connects successive blocks and links attention–MLP sub-modules inside each block.  \n• Assume the true log-space schedule x∈ℝ^{2L} is smooth over that graph and therefore lies in the low-frequency subspace spanned by the first r Laplacian eigenvectors Φ (r≪2L).  Only the coefficient vector c (dim r≈128) is tracked.  \n• State dynamics: c_{t+1} = c_t + w_t with w_t ∼ 𝓝(0, β Σ_BO).  Σ_BO is the GP posterior covariance produced by the last BO call and thus encodes unexplored directions.  \n• Observations: every τ′ optimisation steps collect z_t = [Δℓ/τ′, g_rms¹…g_rms^{2L}].  A forward-mode AD pass computes the Jacobian ∂g/∂x, and the observation matrix becomes H_t = Φᵀ ∂g/∂x.  \n• EKF update: perform the Kalman correction in r-space, then predict with process noise.  If state uncertainty exceeds ε, launch a BO search in the same latent space initialised at (μ̂,P̂) to refine c.  \n• After each training run, append the final (μ, P) to a replay buffer and update a variational Gaussian prior p(c₀)=𝓝(μ₀,Σ₀) used to initialise future runs—providing meta-learning across fine-tunings.  \n• The recovered x=Φc is exponentiated and written into the optimiser’s param-groups, requiring only ≈150 lines of extra PyTorch code and negligible runtime overhead (≤2 % excluding BO).",
+          "comparative_methods": [
+            "HierEKF-Hyper"
+          ],
+          "models_to_use": [
+            "Qwen3-0.6B (0.6B)"
+          ],
+          "datasets_to_use": [
+            "gsm8k"
+          ],
+          "hyperparameters_to_search": {
+            "r (latent dimension)": "32,64,128,256",
+            "beta (process_noise_scale)": "0.5-2.0",
+            "epsilon (BO trigger threshold)": "0.005-0.05",
+            "tau_prime (observation interval)": "50-200",
+            "initial_learning_rate_log_scale": "-11.5 to -6.0",
+            "initial_weight_decay_log_scale": "-12.0 to -7.0"
+          }
+        },
+        "experiment_runs": [
+          {
+            "run_id": "proposed-iter1-Qwen3-0.6B-0.6B-gsm8k",
+            "method_name": "proposed",
+            "model_name": "Qwen3-0.6B (0.6B)",
+            "dataset_name": "gsm8k"
+          },
+          {
+            "run_id": "comparative-1-iter1-Qwen3-0.6B-0.6B-gsm8k",
+            "method_name": "comparative-1",
+            "model_name": "Qwen3-0.6B (0.6B)",
+            "dataset_name": "gsm8k"
+          }
+        ]
       }
     ]
   }
