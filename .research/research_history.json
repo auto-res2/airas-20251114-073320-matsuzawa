@@ -825,6 +825,11 @@
       "expected_result": "Mean ± sd (3 seeds):\nConst          55.0 ±0.5\nAutoLRS        57.0 ±1.2\nKalmanLR       61.5 ±0.3\nHierEKF-Hyper  64.6 ±0.2\nGraphEKF-Hyper 66.4 ±0.2   (BO time 5 %, 0 overflows)\nGSM-Hard: +3.1 pp over HierEKF.  GSM1k: +2.8 pp.  4-bit QLoRA accuracy drop reduced from −2.0 pp (HierEKF) to −0.6 pp; 3-bit GPTQ now trains without divergence in 2/3 seeds.",
       "expected_conclusion": "Modelling per-layer LR/WD as a compressed graph signal removes the last averaging barrier while keeping optimisation in a 128-D space.  The Laplacian basis captures smooth depth-wise correlations; EKF filtering plus a learned hierarchical prior delivers a further 1.8 pp on GSM8K and markedly better robustness to data shifts and aggressive quantisation.  Because the state dimension grows only logarithmically with model depth the method is scalable to >7 B-parameter LLMs, offering an off-the-shelf, data-efficient hyper-parameter controller for low-budget fine-tuning and safe deployment in resource-constrained settings."
     },
-    "iterations": []
+    "iterations": [
+      {
+        "iteration_id": 1,
+        "method": "GraphEKF-Hyper.  (i)  Represent the 2-parameter state of every transformer block as nodes in a line graph; edges connect consecutive blocks and link attention–MLP pairs inside a block.  (ii)  Assume the joint LR/WD log-state x∈ℝ^{2L} lies in a low-frequency subspace spanned by the first r Laplacian eigenvectors Φ∈ℝ^{2L×r} (r≪2L, r≈128).  Track only the compressed coefficients c so that x≈Φc.  (iii)  Process model: c_{t+1}=c_t+w_t, w_t~𝓝(0,β·Σ_BO).  Σ_BO is the GP posterior covariance projected into the eigenbasis; β≈1.  (iv)  Observations every τ′ steps: z_t = [Δℓ/τ′, g_rms^1,…,g_rms^{2L}] where g_rms^i is rms-gradient of sub-module i.  Linearise g(x) with one forward-AD pass; extra cost ≤2 batches.  Observation matrix H_t is Φᵀ∂g/∂x.  (v)  Extended Kalman update in r-dim space, predict, inject BO only if max diag(P̂)>ε.  BO searches in the same r-dim space, warm-started at (μ̂,P̂).  (vi)  A tiny replay buffer of past runs trains a variational prior p(c₀)=𝓝(μ₀,Σ₀); this becomes the EKF initial belief and is updated after each run (empirical Bayes).  (vii)  Output per-parameter LR & WD by mapping Φc back to layer space; fits existing PyTorch optimiser hooks (~150 loc)."
+      }
+    ]
   }
 }
